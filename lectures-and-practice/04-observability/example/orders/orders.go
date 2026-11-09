@@ -40,14 +40,15 @@ func ordersHandler(courierURL string, client *http.Client, logger *slog.Logger) 
 		ctx, span := tracer.Start(r.Context(), "orders.create")
 		defer span.End()
 
-		err := reserveCourier(ctx, courierURL, client) // Ready-made business operation.
-		outcome := "success"
+		reserveCtx, reserveSpan := tracer.Start(ctx, "orders.reserve_courier")
+		err := reserveCourier(reserveCtx, courierURL, client)
 		if err != nil {
-			outcome = "error"
-			span.RecordError(err)
-			span.SetStatus(codes.Error, "courier reservation failed")
+			reserveSpan.RecordError(err)
+			reserveSpan.SetStatus(codes.Error, "courier reservation failed")
 		}
+		reserveSpan.End()
 
+		outcome := "success"
 		result := attribute.String("outcome", outcome)
 		span.SetAttributes(result)
 		attrs := metric.WithAttributes(result)
@@ -55,10 +56,6 @@ func ordersHandler(courierURL string, client *http.Client, logger *slog.Logger) 
 		duration.Record(ctx, time.Since(started).Seconds(), attrs)
 		logger.InfoContext(ctx, "order completed", "outcome", outcome)
 
-		if err != nil {
-			http.Error(w, "courier reservation failed", http.StatusServiceUnavailable)
-			return
-		}
 		w.WriteHeader(http.StatusCreated)
 	})
 	mux := http.NewServeMux()
